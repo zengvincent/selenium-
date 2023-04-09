@@ -1,9 +1,15 @@
 import os
+import threading
 import time
 import winreg
 from datetime import datetime, timedelta
 
+import cv2
+import numpy as np
+from PIL import ImageDraw, ImageGrab
 import pyautogui
+from pynput import keyboard
+
 import uiautomation as auto
 import win32api
 import win32con
@@ -12,12 +18,14 @@ from openpyxl.utils import column_index_from_string
 from retrying import retry
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.support.wait import WebDriverWait
+from webdriver_manager.chrome import ChromeDriverManager
 from win10toast import ToastNotifier
 from win32com.client import DispatchEx
 
@@ -39,23 +47,25 @@ class ExcelVariables:
     ws_wechat_id = load_workbook(
         os.path.join(desktop_path,
                      r"自动化预发货和预揽收\基础文件\快递预揽收人员和仓库文员微信ID.xlsx")).active
-    YtoWechatContactID = ws_wechat_id["B2"].value
-    ZtoWechatContactID = ws_wechat_id["B3"].value
-    EmsWechatContactID = ws_wechat_id["B4"].value
+    Yto_Wechat_ContactID = ws_wechat_id["B2"].value
+    Zto_Wechat_ContactID = ws_wechat_id["B3"].value
+    Ems_Wechat_ContactID = ws_wechat_id["B4"].value
     Erp_Account_WechatID = ws_wechat_id["B5"].value
     Warehouse_Clerk_WechatID = ws_wechat_id["B6"].value
     Yto_ChargeWechatID = ws_wechat_id["B7"].value
     Zto_ChargeWechatID = ws_wechat_id["B8"].value
     Formatted_CurrentDateHour = datetime.now().strftime("%Y年%m月%d日H时")
 
-    def Get_column_last_row(self, file_name, sheet_name, column_name):
+    def Get_single_column_range(self, file_name, sheet_name, column_name,
+                                start_row):
         ws = load_workbook(os.path.join(desktop_path, file_name))[sheet_name]
         for row_num in range(ws.max_row, 0, -1):
             if ws.cell(row_num,
                        column_index_from_string(column_name)).value is not None:
-                last_row_on_column = row_num
+                last_row = row_num
                 break
-        return last_row_on_column
+        return ws[column_name + str(start_row) + ":" + column_name +
+                  str(last_row)]
 
     def OpenXlsm_RunMarco(self, xlsm_name, macro_name):
         excel_app = DispatchEx("Excel.Application")
@@ -106,35 +116,21 @@ class WechatSendfile:
         time.sleep(1)
         search_box.SendKeys("{Enter}")
 
-    def Search_group_atperson(self,
-                              group_name,
-                              at_person1,
-                              at_person2=None,
-                              at_person3=None):
-        auto.SetClipboardText(group_name)
+    def Search_group_atperson(self, 外加工厂群聊备注, *args):
+        auto.SetClipboardText(外加工厂群聊备注)
         search_box.Click(simulateMove=False)
         search_box.SendKeys("{Ctrl}v")
         time.sleep(1)
         search_box.SendKeys("{Enter}")
         time.sleep(0.5)
-        input_box.SendKeys("@")
-        input_box.SendKeys(at_person1, interval=0.05)
-        time.sleep(1)
-        input_box.SendKeys("{Enter}")
-        if at_person2 is not None:
-            input_box.SendKeys("@")
-            input_box.SendKeys(at_person2, interval=0.05)
-            time.sleep(1)
-            input_box.SendKeys("{Enter}")
-        else:
-            pass
-        if at_person3 is not None:
-            input_box.SendKeys("@")
-            input_box.SendKeys(at_person3, interval=0.05)
-            time.sleep(1)
-            input_box.SendKeys("{Enter}")
-        else:
-            pass
+        for arg in args:
+            if arg is not None:
+                input_box.SendKeys("@")
+                input_box.SendKeys(arg, interval=0.05)
+                time.sleep(1)
+                input_box.SendKeys("{Enter}")
+            else:
+                pass
 
     def Send_text(self, message):
         auto.SetClipboardText(message)
@@ -188,9 +184,10 @@ class WebElements:
             r'start chrome --remote-debugging-port=9527 --user-data-dir="D:\selenium\AutomationProfile"'
         )
         options = Options()
+        service = Service(ChromeDriverManager().install())
         options.add_experimental_option("debuggerAddress", "127.0.0.1:9527")
         options.add_argument("--start-maximized")
-        self.driver = webdriver.Chrome(options=options)
+        self.driver = webdriver.Chrome(options=options, service=service)
         self.driver.get("https://www.erp321.com/")
         self.wait = WebDriverWait(self.driver, 30)
 
@@ -200,9 +197,10 @@ class WebElements:
 
     def Attach_to_erp321(self):
         options = Options()
+        service = Service(ChromeDriverManager().install())
         options.add_experimental_option("debuggerAddress", "127.0.0.1:9527")
         options.add_argument("--start-maximized")
-        self.driver = webdriver.Chrome(options=options)
+        self.driver = webdriver.Chrome(options=options, service=service)
         self.driver.switch_to.window(self.driver.window_handles[0])
         self.wait = WebDriverWait(self.driver, 30)
 
@@ -270,18 +268,27 @@ def 微信发送_外加工厂缺货图片():
     wx = WechatSendfile()
     excel = ExcelVariables()
     wx.Open_Wechat()
-    ws = load_workbook(os.path.join(desktop_path,
-                                    r'缺货计算\4外加工厂缺货模板.xlsx'))['Sheet1']
-    for 缺货外加工厂 in ws['A2:A' + str(
-            excel.Get_column_last_row(r'缺货计算\4外加工厂缺货模板.xlsx', 'Sheet1', 'A'))]:
+    for 缺货外加工厂 in excel.Get_single_column_range(
+            file_name=r'缺货计算\4外加工厂缺货模板.xlsx',
+            sheet_name='Sheet1',
+            column_name='A',
+            start_row=2):
         if 缺货外加工厂[0].value is not None:
             for 外加工厂名称 in wx.ws_outsource_factory.iter_rows(
                     2, wx.ws_outsource_factory.max_row, 1, 1):
                 if 外加工厂名称[0].value == 缺货外加工厂[0].value:
-                    wx.Search_group_atperson(
-                        group_name='外加工厂-' + 缺货外加工厂[0].value,
-                        at_person1=外加工厂名称[0].offset(0, 1).value,
+                    args = (
+                        '外加工厂-' + 缺货外加工厂[0].value,  # 外加工厂群聊备注赋值
+                        外加工厂名称[0].offset(0, 1).value,  # 外加工厂联系人微信号赋值
                     )
+                    cell_range = excel.Get_single_column_range(
+                        file_name=r'缺货计算\外加工厂基础资料.xlsx',
+                        sheet_name='Sheet1',
+                        column_name='F',
+                        start_row=2)
+                    本厂要艾特的联系人微信号 = tuple(cell[0].value for cell in cell_range)
+                    args += 本厂要艾特的联系人微信号
+                    wx.Search_group_atperson(*args)
                     wx.Send_text('这个群发测试，请忽略')
                     wx.Send_file(
                         os.path.join(desktop_path, r'缺货计算\缺货图片',
@@ -291,15 +298,57 @@ def 微信发送_外加工厂缺货图片():
     del wx
 
 
-def 录屏开始():
-    pass
+class RecordScreen:
 
+    def 录屏开始(self):  # 录入视频
+        global record_name
+        fps = 10
+        record_name = datetime.now().strftime(
+            '%Y-%m-%d %H-%M-%S')  # 当前的时间（当文件名）
+        screen = ImageGrab.grab()  # 获取当前屏幕
+        width, high = screen.size  # 获取当前屏幕的大小
+        fourcc = cv2.VideoWriter_fourcc('X', 'V', 'I',
+                                        'D')  # MPEG-4编码,文件后缀可为.avi .asf .mov等
+        video = cv2.VideoWriter('%s.avi' % record_name, fourcc, fps,
+                                (width, high))  # （文件名，编码器，帧率，视频宽高）
+        print('开始录制!')
+        prev_x, prev_y = None, None  # 用于记录上一帧的鼠标坐标
+        while True:
+            if self.flag:
+                print("录制结束！")
+                video.release()  # 释放
+                break
+            im = ImageGrab.grab()  # 屏幕抓图，图片为RGB模式
+            # 获取当前鼠标的坐标
+            x, y = pyautogui.position()
+            # 如果上一帧的鼠标坐标和当前鼠标坐标不一样，说明鼠标有移动
+            if prev_x is not None and prev_y is not None and (prev_x != x or
+                                                              prev_y != y):
+                # 在鼠标位置画黄底圆圈
+                draw = ImageDraw.Draw(im)
+                draw.ellipse([(x - 15, y - 15), (x + 15, y + 15)],
+                             outline='yellow',
+                             width=4)
+            prev_x, prev_y = x, y  # 更新上一帧的鼠标坐标
+            frame = cv2.cvtColor(np.array(im),
+                                 cv2.COLOR_RGB2BGR)  # 转为opencv的BGR模式
+            video.write(frame)  # 写入vedio定义的文件
 
-def 录屏结束():
-    pass
+    def 录屏结束(self):
+        self.flag = True
+
+    def 开启线程录屏(self):
+        self.flag = False
+        th = threading.Thread(target=self.录屏开始)
+        th.start()
 
 
 if __name__ == "__main__":
-    微信发送_外加工厂缺货图片()
-    toaster.show_toast("任务执行情况", "任务执行完毕", duration=1)
-    del toaster
+    rec_scr = RecordScreen()
+    rec_scr.开启线程录屏()
+    time.sleep(10)
+    rec_scr.录屏结束()
+    del rec_scr
+    # 微信发送_外加工厂缺货图片()
+    # toaster.show_toast("任务执行情况", "任务执行完毕", duration=1)
+    # del toaster
