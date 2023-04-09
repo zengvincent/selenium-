@@ -1,0 +1,305 @@
+import os
+import time
+import winreg
+from datetime import datetime, timedelta
+
+import pyautogui
+import uiautomation as auto
+import win32api
+import win32con
+from openpyxl import load_workbook
+from openpyxl.utils import column_index_from_string
+from retrying import retry
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support import expected_conditions as ec
+from selenium.webdriver.support.ui import Select
+from selenium.webdriver.support.wait import WebDriverWait
+from win10toast import ToastNotifier
+from win32com.client import DispatchEx
+
+toaster = ToastNotifier()
+
+# yesterday = (datetime.today().date() + timedelta(days=1)).strftime("%Y%m%d")
+# print(yesterday)
+
+
+class ExcelVariables:
+    global desktop_path
+    desktop_path = winreg.QueryValueEx(
+        winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders",
+        ),
+        "Desktop",
+    )[0]
+    ws_wechat_id = load_workbook(
+        os.path.join(desktop_path,
+                     r"自动化预发货和预揽收\基础文件\快递预揽收人员和仓库文员微信ID.xlsx")).active
+    YtoWechatContactID = ws_wechat_id["B2"].value
+    ZtoWechatContactID = ws_wechat_id["B3"].value
+    EmsWechatContactID = ws_wechat_id["B4"].value
+    Erp_Account_WechatID = ws_wechat_id["B5"].value
+    Warehouse_Clerk_WechatID = ws_wechat_id["B6"].value
+    Yto_ChargeWechatID = ws_wechat_id["B7"].value
+    Zto_ChargeWechatID = ws_wechat_id["B8"].value
+    Formatted_CurrentDateHour = datetime.now().strftime("%Y年%m月%d日H时")
+
+    def Get_column_last_row(self, file_name, sheet_name, column_name):
+        ws = load_workbook(os.path.join(desktop_path, file_name))[sheet_name]
+        for row_num in range(ws.max_row, 0, -1):
+            if ws.cell(row_num,
+                       column_index_from_string(column_name)).value is not None:
+                last_row_on_column = row_num
+                break
+        return last_row_on_column
+
+    def OpenXlsm_RunMarco(self, xlsm_name, macro_name):
+        excel_app = DispatchEx("Excel.Application")
+        excel_app.Visible = True
+        wb = excel_app.Workbooks.Open(os.path.join(desktop_path, xlsm_name))
+        wb.Application.Run(macro_name)
+        wb.Close(False)
+        excel_app.Quit()
+
+
+class WechatSendfile:
+
+    def __init__(self):
+        self.ws_outsource_factory = load_workbook(
+            os.path.join(desktop_path, r'缺货计算\外加工厂基础资料.xlsx')).active
+
+    def GetWechatPath(self):
+        key = win32api.RegOpenKey(
+            win32con.HKEY_CURRENT_USER,
+            "SOFTWARE\\Tencent\\WeChat",
+            0,
+            win32con.KEY_ALL_ACCESS,
+        )
+        value = win32api.RegQueryValueEx(key, "InstallPath")[0]
+        win32api.RegCloseKey(key)
+        value += "\\" + "WeChat.exe"
+        return value
+
+    @retry(stop_max_attempt_number=3)
+    def Open_Wechat(self):
+        global WechatWindow, search_box, input_box, sendfile_button, send_button
+        auto.SendKeys("{Ctrl}{Alt}w")  # 快捷键打开微信
+        WechatWindow = auto.WindowControl(searchDepth=1, Name="微信")
+        if not WechatWindow.Exists():
+            toaster.show_toast("异常情况", "微信没有打开，正在重试打开微信", duration=5)
+            os.startfile(self.GetWechatPath())
+            auto.PaneControl(
+                searchDepth=2,
+                Name="微信").ButtonControl(Name="进入微信").Click(simulateMove=False)
+        search_box = WechatWindow.EditControl(Name="搜索")
+        input_box = WechatWindow.EditControl(Name="输入")
+        sendfile_button = WechatWindow.ButtonControl(Name="发送文件")
+
+    def Search_person(self, name):
+        auto.SetClipboardText(name)
+        search_box.Click(simulateMove=False)
+        search_box.SendKeys("{Ctrl}v")
+        time.sleep(1)
+        search_box.SendKeys("{Enter}")
+
+    def Search_group_atperson(self,
+                              group_name,
+                              at_person1,
+                              at_person2=None,
+                              at_person3=None):
+        auto.SetClipboardText(group_name)
+        search_box.Click(simulateMove=False)
+        search_box.SendKeys("{Ctrl}v")
+        time.sleep(1)
+        search_box.SendKeys("{Enter}")
+        time.sleep(0.5)
+        input_box.SendKeys("@")
+        input_box.SendKeys(at_person1, interval=0.05)
+        time.sleep(1)
+        input_box.SendKeys("{Enter}")
+        if at_person2 is not None:
+            input_box.SendKeys("@")
+            input_box.SendKeys(at_person2, interval=0.05)
+            time.sleep(1)
+            input_box.SendKeys("{Enter}")
+        else:
+            pass
+        if at_person3 is not None:
+            input_box.SendKeys("@")
+            input_box.SendKeys(at_person3, interval=0.05)
+            time.sleep(1)
+            input_box.SendKeys("{Enter}")
+        else:
+            pass
+
+    def Send_text(self, message):
+        auto.SetClipboardText(message)
+        input_box.SendKeys("{Ctrl}v")
+        time.sleep(1)
+        input_box.SendKeys("{Enter}")
+
+    def Send_file(self, file_path):
+        sendfile_button.Click(simulateMove=False)
+        global OpenFile, filename_box, open_button
+        filename_box = auto.WindowControl(searchDepth=3,
+                                          Name="打开").EditControl(Name="文件名(N):")
+        auto.SetClipboardText(file_path)
+        filename_box.Click(simulateMove=False)
+        filename_box.SendKeys("{Ctrl}v")
+        time.sleep(1)
+        filename_box.SendKeys("{Enter}")
+        time.sleep(1)
+        input_box.SendKeys("{Enter}")
+
+
+class ElementsXpath:
+    Close_ExpiryWindow = '//span[@class="ant-modal-close-x"]'
+    侧边菜单_订单 = '//div[@class="side-menu-a"][text()="订单"]'
+    订单_订单 = '//div[@class="side-menu-cell side-menu-cell-usual"]/div[@class="side-menu-item usual" and text()="订单"]'
+    dan_cainiao = '//div[@class="block___3TxY4"]'
+    订单查询池_抖音1020预发货 = '//div[text()="抖音1020预发货"]'
+    订单查询池_预发货0920 = '//div[text()="预发货0920"]'
+    侧边菜单_报表 = '//div[@class="side-menu-a"][text()="报表"]'
+    报表_销售主题分析 = '//div[@class="side-menu-cell side-menu-cell-usual"]/div[@class="side-menu-item usual" and text()="销售主题分析"]'
+    销售主题分析_销售排行商品 = '//div[text()="销售排行(商品)"]'
+    查询池 = '//span[contains(text(),"查询池")]'
+    iframe_销售主题分析 = (
+        '//iframe[@src="//bi.erp321.com/app/daas/report/subject/order/default.aspx"]'
+    )
+    iframe_订单 = 'iframe[@src="app/order/order/list.aspx"]'
+    iframe_主页 = '//iframe[@id="home"]'
+    iframe_查询池 = '//iframe[@id="s_filter_frame"]'
+    iframe_销售主题分析_销售排行商品 = '//iframe[@id="tab0"]'
+    销售主题分析查询池_最近7天销量 = '//div[text()="最近7天销量"]'
+    导出EXCEL = '//span[text()="导出EXCEL"]'
+
+
+class WebElements:
+
+    def __init__(self):
+        pass
+
+    def Open_erp321(self):
+        os.system(
+            r'start chrome --remote-debugging-port=9527 --user-data-dir="D:\selenium\AutomationProfile"'
+        )
+        options = Options()
+        options.add_experimental_option("debuggerAddress", "127.0.0.1:9527")
+        options.add_argument("--start-maximized")
+        self.driver = webdriver.Chrome(options=options)
+        self.driver.get("https://www.erp321.com/")
+        self.wait = WebDriverWait(self.driver, 30)
+
+    def Close_erp321(self):
+        self.driver.close()
+        self.driver.service.stop()
+
+    def Attach_to_erp321(self):
+        options = Options()
+        options.add_experimental_option("debuggerAddress", "127.0.0.1:9527")
+        options.add_argument("--start-maximized")
+        self.driver = webdriver.Chrome(options=options)
+        self.driver.switch_to.window(self.driver.window_handles[0])
+        self.wait = WebDriverWait(self.driver, 30)
+
+    def Switch_to_default(self):
+        self.driver.switch_to.default_content()
+
+    def Switch_to_iframe(self, element):
+        self.wait.until(ec.presence_of_element_located((By.XPATH, element)))
+        self.driver.switch_to.frame(self.driver.find_element(By.XPATH, element))
+
+    def Click_element(self,
+                      element,
+                      click_type="single_click",
+                      populate_text=None,
+                      select_text=None):
+        self.wait.until(ec.element_to_be_clickable((By.XPATH, element)))
+        if click_type == "single_click":
+            self.driver.find_element(By.XPATH, element).click()
+        if click_type == "double_click":
+            ActionChains(self.driver).double_click(
+                self.driver.find_element(By.XPATH, element)).perform()
+        if click_type == "radio|checkbox":
+            if not self.driver.find_element(By.XPATH, element).is_selected():
+                self.driver.find_element(By.XPATH, element).click()
+        if click_type == "textbox":
+            self.driver.find_element(By.XPATH, element).clear()
+            self.driver.find_element(By.XPATH, element).send_keys(populate_text)
+        if click_type == "selectbox":
+            Select(self.driver.find_element(
+                By.XPATH, element)).select_by_visible_text(select_text)
+
+    def Saveas(self, file_path):
+        self.saveas_window = auto.WindowControl(searchDepth=2, Name="另存为")
+        auto.WaitForExist(self.saveas_window, timeout=120)
+        self.saveas_filename = self.saveas_window.EditControl(Name="文件名:")
+        auto.SetClipboardText(file_path)
+        self.saveas_filename.SendKeys("{Delete}")
+        self.saveas_filename.SendKeys("{Ctrl}v")
+        time.sleep(1)
+        self.saveas_filename.SendKeys("{Enter}")
+        if auto.WindowControl(searchDepth=3, Name="确认另存为").Exists():
+            auto.WindowControl(searchDepth=3, Name="确认另存为").ButtonControl(
+                Name="是(Y)").Click(simulateMove=False)
+
+
+def 销售主题分析_导近7天销量():
+    browser = WebElements()
+    browser.Attach_to_erp321()
+    browser.Click_element(ElementsXpath.侧边菜单_报表)
+    browser.Click_element(ElementsXpath.报表_销售主题分析)
+    browser.Switch_to_iframe(ElementsXpath.iframe_销售主题分析)
+    browser.Click_element(ElementsXpath.销售主题分析_销售排行商品)
+    browser.Switch_to_iframe(ElementsXpath.iframe_查询池)
+    browser.Click_element(ElementsXpath.查询池)
+    browser.Click_element(ElementsXpath.销售主题分析查询池_最近7天销量)
+    browser.Switch_to_default()
+    browser.Switch_to_iframe(ElementsXpath.iframe_销售主题分析)
+    browser.Switch_to_iframe(ElementsXpath.iframe_销售主题分析_销售排行商品)
+    browser.Click_element(ElementsXpath.导出EXCEL)
+    browser.Saveas(os.path.join(desktop_path, r"下单计算\近7天销量.xlsx"))
+    del browser
+
+
+def 微信发送_外加工厂缺货图片():
+    wx = WechatSendfile()
+    excel = ExcelVariables()
+    wx.Open_Wechat()
+    ws = load_workbook(os.path.join(desktop_path,
+                                    r'缺货计算\4外加工厂缺货模板.xlsx'))['Sheet1']
+    for 缺货外加工厂 in ws['A2:A' + str(
+            excel.Get_column_last_row(r'缺货计算\4外加工厂缺货模板.xlsx', 'Sheet1', 'A'))]:
+        if 缺货外加工厂[0].value is not None:
+            for 外加工厂名称 in wx.ws_outsource_factory.iter_rows(
+                    2, wx.ws_outsource_factory.max_row, 1, 1):
+                if 外加工厂名称[0].value == 缺货外加工厂[0].value:
+                    wx.Search_group_atperson(
+                        group_name='外加工厂-' + 缺货外加工厂[0].value,
+                        at_person1=外加工厂名称[0].offset(0, 1).value,
+                    )
+                    wx.Send_text('这个群发测试，请忽略')
+                    wx.Send_file(
+                        os.path.join(desktop_path, r'缺货计算\缺货图片',
+                                     缺货外加工厂[0].value + '.png'))
+                    break
+    del excel
+    del wx
+
+
+def 录屏开始():
+    pass
+
+
+def 录屏结束():
+    pass
+
+
+if __name__ == "__main__":
+    微信发送_外加工厂缺货图片()
+    toaster.show_toast("任务执行情况", "任务执行完毕", duration=1)
+    del toaster
