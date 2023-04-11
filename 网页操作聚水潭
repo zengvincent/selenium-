@@ -1,14 +1,15 @@
 import os
-import threading
 import time
 import winreg
 from datetime import datetime, timedelta
+from enum import Enum
 
-import cv2
-import numpy as np
-from PIL import ImageDraw, ImageGrab
-import pyautogui
-from pynput import keyboard
+# 录屏用到的库
+# import threading
+# import cv2
+# import numpy as np
+# import pyautogui
+# from PIL import ImageDraw, ImageGrab
 
 import uiautomation as auto
 import win32api
@@ -21,22 +22,61 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
+# from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.support.wait import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 from win10toast import ToastNotifier
 from win32com.client import DispatchEx
+"""录屏
+class RecordScreen:
 
-toaster = ToastNotifier()
+    def 录屏开始(self):  # 录入视频
+        global record_name
+        fps = 15
+        record_name = datetime.now().strftime(
+            '%Y-%m-%d %H-%M-%S')  # 当前的时间（当文件名）
+        screen = ImageGrab.grab()  # 获取当前屏幕
+        width, high = screen.size  # 获取当前屏幕的大小
+        fourcc = cv2.VideoWriter_fourcc('X', 'V', 'I',
+                                        'D')  # MPEG-4编码,文件后缀可为.avi .asf .mov等
+        video = cv2.VideoWriter('%s.avi' % record_name, fourcc, fps,
+                                (width, high))  # （文件名，编码器，帧率，视频宽高）
+        print('开始录制!')
+        prev_x, prev_y = None, None  # 用于记录上一帧的鼠标坐标
+        while True:
+            if self.flag:
+                print("录制结束！")
+                video.release()  # 释放
+                break
+            im = ImageGrab.grab()  # 屏幕抓图，图片为RGB模式
+            # 获取当前鼠标的坐标
+            x, y = pyautogui.position()
+            # 如果上一帧的鼠标坐标和当前鼠标坐标不一样，说明鼠标有移动
+            if prev_x is not None and prev_y is not None and (prev_x != x or
+                                                              prev_y != y):
+                # 在鼠标位置画黄底圆圈
+                draw = ImageDraw.Draw(im)
+                draw.ellipse([(x - 15, y - 15), (x + 15, y + 15)],
+                             outline='yellow',
+                             width=4)
+            prev_x, prev_y = x, y  # 更新上一帧的鼠标坐标
+            frame = cv2.cvtColor(np.array(im),
+                                 cv2.COLOR_RGB2BGR)  # 转为opencv的BGR模式
+            video.write(frame)  # 写入vedio定义的文件
 
-# yesterday = (datetime.today().date() + timedelta(days=1)).strftime("%Y%m%d")
-# print(yesterday)
+    def 录屏结束(self):
+        self.flag = True
+
+    def 开启线程录屏(self):
+        self.flag = False
+        # threading.Thread(target=self.录屏开始).start()
+"""
 
 
 class ExcelVariables:
-    global desktop_path
+    global desktop_path, formatted_today
     desktop_path = winreg.QueryValueEx(
         winreg.OpenKey(
             winreg.HKEY_CURRENT_USER,
@@ -44,17 +84,9 @@ class ExcelVariables:
         ),
         "Desktop",
     )[0]
-    ws_wechat_id = load_workbook(
-        os.path.join(desktop_path,
-                     r"自动化预发货和预揽收\基础文件\快递预揽收人员和仓库文员微信ID.xlsx")).active
-    Yto_Wechat_ContactID = ws_wechat_id["B2"].value
-    Zto_Wechat_ContactID = ws_wechat_id["B3"].value
-    Ems_Wechat_ContactID = ws_wechat_id["B4"].value
-    Erp_Account_WechatID = ws_wechat_id["B5"].value
-    Warehouse_Clerk_WechatID = ws_wechat_id["B6"].value
-    Yto_ChargeWechatID = ws_wechat_id["B7"].value
-    Zto_ChargeWechatID = ws_wechat_id["B8"].value
-    Formatted_CurrentDateHour = datetime.now().strftime("%Y年%m月%d日H时")
+    formatted_today = datetime.now().strftime("%Y-%m-%d")
+    formatted_yesterday = (datetime.today().date() -
+                           timedelta(days=1)).strftime("%Y-%m-%d")
 
     def Get_single_column_range(self, file_name, sheet_name, column_name,
                                 start_row):
@@ -67,117 +99,63 @@ class ExcelVariables:
         return ws[column_name + str(start_row) + ":" + column_name +
                   str(last_row)]
 
-    def OpenXlsm_RunMarco(self, xlsm_name, macro_name):
-        excel_app = DispatchEx("Excel.Application")
-        excel_app.Visible = True
-        wb = excel_app.Workbooks.Open(os.path.join(desktop_path, xlsm_name))
-        wb.Application.Run(macro_name)
-        wb.Close(False)
-        excel_app.Quit()
+    def Open_xlsm_run_marco(self, xlsm_name, macro_name):
+        self.excel_app = DispatchEx("Excel.Application")
+        self.excel_app.Visible = True
+        self.wb = self.excel_app.Workbooks.Open(
+            os.path.join(desktop_path, xlsm_name))
+        self.wb.Application.Run(macro_name)
 
-
-class WechatSendfile:
-
-    def __init__(self):
-        self.ws_outsource_factory = load_workbook(
-            os.path.join(desktop_path, r'缺货计算\外加工厂基础资料.xlsx')).active
-
-    def GetWechatPath(self):
-        key = win32api.RegOpenKey(
-            win32con.HKEY_CURRENT_USER,
-            "SOFTWARE\\Tencent\\WeChat",
-            0,
-            win32con.KEY_ALL_ACCESS,
-        )
-        value = win32api.RegQueryValueEx(key, "InstallPath")[0]
-        win32api.RegCloseKey(key)
-        value += "\\" + "WeChat.exe"
-        return value
-
-    @retry(stop_max_attempt_number=3)
-    def Open_Wechat(self):
-        global WechatWindow, search_box, input_box, sendfile_button, send_button
-        auto.SendKeys("{Ctrl}{Alt}w")  # 快捷键打开微信
-        WechatWindow = auto.WindowControl(searchDepth=1, Name="微信")
-        if not WechatWindow.Exists():
-            toaster.show_toast("异常情况", "微信没有打开，正在重试打开微信", duration=5)
-            os.startfile(self.GetWechatPath())
-            auto.PaneControl(
-                searchDepth=2,
-                Name="微信").ButtonControl(Name="进入微信").Click(simulateMove=False)
-        search_box = WechatWindow.EditControl(Name="搜索")
-        input_box = WechatWindow.EditControl(Name="输入")
-        sendfile_button = WechatWindow.ButtonControl(Name="发送文件")
-
-    def Search_person(self, name):
-        auto.SetClipboardText(name)
-        search_box.Click(simulateMove=False)
-        search_box.SendKeys("{Ctrl}v")
-        time.sleep(1)
-        search_box.SendKeys("{Enter}")
-
-    def Search_group_atperson(self, 外加工厂群聊备注, *args):
-        auto.SetClipboardText(外加工厂群聊备注)
-        search_box.Click(simulateMove=False)
-        search_box.SendKeys("{Ctrl}v")
-        time.sleep(1)
-        search_box.SendKeys("{Enter}")
-        time.sleep(0.5)
-        for arg in args:
-            if arg is not None:
-                input_box.SendKeys("@")
-                input_box.SendKeys(arg, interval=0.05)
-                time.sleep(1)
-                input_box.SendKeys("{Enter}")
-            else:
-                pass
-
-    def Send_text(self, message):
-        auto.SetClipboardText(message)
-        input_box.SendKeys("{Ctrl}v")
-        time.sleep(1)
-        input_box.SendKeys("{Enter}")
-
-    def Send_file(self, file_path):
-        sendfile_button.Click(simulateMove=False)
-        global OpenFile, filename_box, open_button
-        filename_box = auto.WindowControl(searchDepth=3,
-                                          Name="打开").EditControl(Name="文件名(N):")
-        auto.SetClipboardText(file_path)
-        filename_box.Click(simulateMove=False)
-        filename_box.SendKeys("{Ctrl}v")
-        time.sleep(1)
-        filename_box.SendKeys("{Enter}")
-        time.sleep(1)
-        input_box.SendKeys("{Enter}")
+    def Close_xlsm(self, xlsm_name):
+        self.wb.Close(False)
+        self.excel_app.Quit()
 
 
 class ElementsXpath:
-    Close_ExpiryWindow = '//span[@class="ant-modal-close-x"]'
     侧边菜单_订单 = '//div[@class="side-menu-a"][text()="订单"]'
-    订单_订单 = '//div[@class="side-menu-cell side-menu-cell-usual"]/div[@class="side-menu-item usual" and text()="订单"]'
-    dan_cainiao = '//div[@class="block___3TxY4"]'
-    订单查询池_抖音1020预发货 = '//div[text()="抖音1020预发货"]'
-    订单查询池_预发货0920 = '//div[text()="预发货0920"]'
     侧边菜单_报表 = '//div[@class="side-menu-a"][text()="报表"]'
+    侧边菜单_库存 = '//div[@class="side-menu-a"][text()="库存"]'
+    订单_订单 = '//div[@class="side-menu-cell side-menu-cell-usual"]/div[@class="side-menu-item usual" and text()="订单"]'
+    订单_导出订单 = '//div[@class="side-menu-cell side-menu-cell-usual"]/div[@class="side-menu-item usual" and text()="导出订单"]'
+    库存_箱及仓位库存 = '//div[@class="side-menu-cell side-menu-cell-usual"]/div[@class="side-menu-item usual" and text()="箱及仓位库存"]'
+    库存_商品库存分仓 = '//div[@class="side-menu-cell side-menu-cell-usual"]/div[@class="side-menu-item usual" and text()="商品库存（分仓）"]'
+    库存_采购入库 = '//div[@class="side-menu-cell side-menu-cell-usual"]/div[@class="side-menu-item usual" and text()="采购入库"]'
+    账号穿透_贸易账号 = '//div[@class="plb_bar_co"][text()="厦门市秀衫衫贸易有限公司"]'
+    账号穿透_厦门总发货仓 = '//div[text()="厦门秀衫衫总发货仓"]'
+    账号穿透_广州云衫仓 = '//div[text()="广州云衫仓"]'
+    账号穿透_上海仓 = '//div[text()="秀衫衫-上海仓"]'
+    账号穿透_确定 = '//span[text()="确定"]'
+    查询池 = '//span[contains(text(),"查询池")]'
+    查询池_昨天销售 = '//div[text()="昨天销售"]'
+    查询池_昨天17000未发订单 = '//div[text()="昨天17000未发订单"]'
+    库存_导出到EXCEL = '//span[text()="导出到Excel"]'
+    导出所有符合条件的订单 = '//span[text()="导出所有符合条件的订单"]'
+    导出所有符合条件的单据 = '//div[text()="导出所有符合条件的单据"]'
+    导出竖向 = '//div[text()="导出（竖向）"]'
     报表_销售主题分析 = '//div[@class="side-menu-cell side-menu-cell-usual"]/div[@class="side-menu-item usual" and text()="销售主题分析"]'
     销售主题分析_销售排行商品 = '//div[text()="销售排行(商品)"]'
-    查询池 = '//span[contains(text(),"查询池")]'
+    对话框_确认 = '//input[@value="确认"]'
     iframe_销售主题分析 = (
         '//iframe[@src="//bi.erp321.com/app/daas/report/subject/order/default.aspx"]'
     )
-    iframe_订单 = 'iframe[@src="app/order/order/list.aspx"]'
+    iframe_订单 = '//iframe[@src="app/order/order/list.aspx"]'
+    iframe_导出订单 = '//iframe[@src="/app/order/export/exportorder.aspx"]'
     iframe_主页 = '//iframe[@id="home"]'
     iframe_查询池 = '//iframe[@id="s_filter_frame"]'
     iframe_销售主题分析_销售排行商品 = '//iframe[@id="tab0"]'
+    iframe_箱及仓位库存 = '//iframe[@src="app/wms/Pack/PackItems.aspx"]'
+    iframe_商品库存分仓 = '//iframe[@src="/app/item/SkuStock/WmsSkuStock.aspx"]'
+    iframe_采购入库 = '//iframe[@src="app/scm/purchasein/purchasein.aspx"]'
     销售主题分析查询池_最近7天销量 = '//div[text()="最近7天销量"]'
-    导出EXCEL = '//span[text()="导出EXCEL"]'
+    销售主题分析_导出EXCEL = '//span[text()="导出EXCEL"]'
+    采购入库_入库开始时间 = '//input[@title="入库开始时间"]'
+    采购入库_入库结束时间 = '//input[@title="入库结束时间"]'
+    采购入库_选择仓库 = '//select[@id="wms_co_id"]'
+    搜索 = '//a[text()="搜索"]'
+    导出 = '//span[text()="导出"]'
 
 
-class WebElements:
-
-    def __init__(self):
-        pass
+class WebElementsMethod:
 
     def Open_erp321(self):
         os.system(
@@ -246,109 +224,293 @@ class WebElements:
                 Name="是(Y)").Click(simulateMove=False)
 
 
-def 销售主题分析_导近7天销量():
-    browser = WebElements()
-    browser.Attach_to_erp321()
-    browser.Click_element(ElementsXpath.侧边菜单_报表)
-    browser.Click_element(ElementsXpath.报表_销售主题分析)
-    browser.Switch_to_iframe(ElementsXpath.iframe_销售主题分析)
-    browser.Click_element(ElementsXpath.销售主题分析_销售排行商品)
-    browser.Switch_to_iframe(ElementsXpath.iframe_查询池)
-    browser.Click_element(ElementsXpath.查询池)
-    browser.Click_element(ElementsXpath.销售主题分析查询池_最近7天销量)
-    browser.Switch_to_default()
-    browser.Switch_to_iframe(ElementsXpath.iframe_销售主题分析)
-    browser.Switch_to_iframe(ElementsXpath.iframe_销售主题分析_销售排行商品)
-    browser.Click_element(ElementsXpath.导出EXCEL)
-    browser.Saveas(os.path.join(desktop_path, r"下单计算\近7天销量.xlsx"))
-    del browser
+class ExportErp321Files:
+
+    def __init__(self):
+        self.browser = WebElementsMethod()
+        self.browser.Attach_to_erp321()
+
+    def 导出文件_厦门仓库存(self, save_file_path):
+        self.browser.Switch_to_default()
+        self.browser.Click_element(ElementsXpath.侧边菜单_库存)
+        self.browser.Click_element(ElementsXpath.库存_箱及仓位库存)
+        self.browser.Switch_to_iframe(ElementsXpath.iframe_箱及仓位库存)
+        self.browser.Click_element(ElementsXpath.账号穿透_贸易账号)
+        self.browser.Click_element(ElementsXpath.账号穿透_厦门总发货仓)
+        self.browser.Click_element(ElementsXpath.账号穿透_确定)
+        self.browser.Click_element(ElementsXpath.库存_导出到EXCEL)
+        self.browser.Saveas(save_file_path)
+
+    def 导出文件_仓库库存(self, warehouse_name):
+        self.browser.Switch_to_default()
+        self.browser.Click_element(ElementsXpath.侧边菜单_库存)
+        if (warehouse_name == '厦门仓' or warehouse_name == '广州仓'):
+            self.browser.Click_element(ElementsXpath.库存_箱及仓位库存)
+            self.browser.Switch_to_iframe(ElementsXpath.iframe_箱及仓位库存)
+            self.browser.Click_element(ElementsXpath.账号穿透_贸易账号)
+            if warehouse_name == '厦门仓':
+                self.browser.Click_element(ElementsXpath.账号穿透_厦门总发货仓)
+            if warehouse_name == '广州仓':
+                self.browser.Click_element(ElementsXpath.账号穿透_广州云衫仓)
+            self.browser.Click_element(ElementsXpath.账号穿透_确定)
+            self.browser.Click_element(ElementsXpath.库存_导出到EXCEL)
+        if warehouse_name == '上海仓':
+            self.browser.Click_element(ElementsXpath.库存_商品库存分仓)
+            self.browser.Switch_to_iframe(ElementsXpath.iframe_商品库存分仓)
+            self.browser.Click_element(ElementsXpath.账号穿透_贸易账号)
+            self.browser.Click_element(ElementsXpath.账号穿透_上海仓)
+            self.browser.Click_element(ElementsXpath.账号穿透_确定)
+            self.browser.Click_element(ElementsXpath.导出所有符合条件的单据)
+            self.browser.Click_element(ElementsXpath.导出竖向)
+        self.browser.Saveas(
+            os.path.join(desktop_path, r"缺货计算\导出所需文件",
+                         warehouse_name + "库存.xlsx"))
+
+    def 导出文件_广州仓库存(self, save_file_path):
+        self.browser.Switch_to_default()
+        self.browser.Click_element(ElementsXpath.侧边菜单_库存)
+        self.browser.Click_element(ElementsXpath.库存_箱及仓位库存)
+        self.browser.Switch_to_iframe(ElementsXpath.iframe_箱及仓位库存)
+        self.browser.Click_element(ElementsXpath.账号穿透_贸易账号)
+        self.browser.Click_element(ElementsXpath.账号穿透_广州云衫仓)
+        self.browser.Click_element(ElementsXpath.账号穿透_确定)
+        self.browser.Click_element(ElementsXpath.库存_导出到EXCEL)
+        self.browser.Saveas(save_file_path)
+
+    def 导出文件_上海仓库存(self, save_file_path):
+        self.browser.Switch_to_default()
+        self.browser.Click_element(ElementsXpath.侧边菜单_库存)
+        self.browser.Click_element(ElementsXpath.库存_商品库存分仓)
+        self.browser.Switch_to_iframe(ElementsXpath.iframe_商品库存分仓)
+        self.browser.Click_element(ElementsXpath.账号穿透_贸易账号)
+        self.browser.Click_element(ElementsXpath.账号穿透_上海仓)
+        self.browser.Click_element(ElementsXpath.账号穿透_确定)
+        self.browser.Click_element(ElementsXpath.导出所有符合条件的单据)
+        self.browser.Click_element(ElementsXpath.导出竖向)
+        self.browser.Saveas(save_file_path)
+
+    def 导出文件_日期区间销售(self, save_file_path):
+        self.browser.Switch_to_default()
+        self.browser.Click_element(ElementsXpath.侧边菜单_订单)
+        self.browser.Click_element(ElementsXpath.订单_导出订单)
+        self.browser.Switch_to_iframe(ElementsXpath.iframe_导出订单)
+        self.browser.Switch_to_iframe(ElementsXpath.iframe_查询池)
+        self.browser.Click_element(ElementsXpath.查询池)
+        self.browser.Click_element(ElementsXpath.查询池_昨天销售)
+        self.browser.Switch_to_default()
+        self.browser.Switch_to_iframe(ElementsXpath.iframe_导出订单)
+        self.browser.Click_element(ElementsXpath.导出所有符合条件的订单)
+        self.browser.Switch_to_default()
+        self.browser.Click_element(ElementsXpath.对话框_确认)
+        self.browser.Saveas(save_file_path)
+
+    def 导出文件_日期区间采购入库(self,
+                      save_file_path,
+                      start_date=ExcelVariables.formatted_yesterday,
+                      end_date=ExcelVariables.formatted_yesterday):
+        self.browser.Switch_to_default()
+        self.browser.Click_element(ElementsXpath.侧边菜单_库存)
+        self.browser.Click_element(ElementsXpath.库存_采购入库)
+        self.browser.Switch_to_iframe(ElementsXpath.iframe_采购入库)
+        self.browser.Click_element(ElementsXpath.采购入库_入库开始时间,
+                                   click_type='textbox',
+                                   populate_text=start_date)
+        self.browser.Click_element(ElementsXpath.采购入库_入库结束时间,
+                                   click_type='textbox',
+                                   populate_text=end_date)
+        self.browser.Click_element(ElementsXpath.采购入库_选择仓库,
+                                   click_type='selectbox',
+                                   select_text='厦门秀衫衫总发货仓')
+        self.browser.Click_element(ElementsXpath.搜索)
+        self.browser.driver.set_window_size(1000,
+                                            800)  # 这里要是全屏点不了导出，网站的bug，所以缩小屏幕
+        self.browser.Click_element(ElementsXpath.导出)
+        self.browser.Click_element(ElementsXpath.导出所有符合条件的单据)
+        self.browser.driver.maximize_window()
+        self.browser.Saveas(save_file_path)
+
+    def 删除browser实例(self):
+        del self.browser
 
 
-def 微信发送_外加工厂缺货图片():
+class WechatSendfile:
+
+    def __init__(self):
+        self.ws_outsource_factory = load_workbook(
+            os.path.join(desktop_path, r'缺货计算\外加工厂基础资料.xlsx')).active
+        self.ws_wechat_id = load_workbook(
+            os.path.join(desktop_path,
+                         r"自动化预发货和预揽收\基础文件\快递预揽收人员和仓库文员微信ID.xlsx")).active
+        self.圆通群揽收人员微信号 = self.ws_wechat_id["B2"].value
+        self.中通群揽收人员微信号 = self.ws_wechat_id["B3"].value
+        self.邮政群揽收人员微信号 = self.ws_wechat_id["B4"].value
+        self.聚水潭账号人员微信号 = self.ws_wechat_id["B5"].value
+        self.仓库文员1微信号 = self.ws_wechat_id["B6"].value
+        self.圆通群充单人员微信号 = self.ws_wechat_id["B7"].value
+        self.中通群充单人员微信号 = self.ws_wechat_id["B8"].value
+        self.圆通揽收微信群备注 = self.ws_wechat_id["B9"].value
+        self.中通揽收微信群备注 = self.ws_wechat_id["B10"].value
+        self.邮政揽收微信群备注 = self.ws_wechat_id["B11"].value
+        self.圆通充值微信群备注 = self.ws_wechat_id["B12"].value
+        self.中通充值微信群备注 = self.ws_wechat_id["B13"].value
+        self.缺货群发消息 = self.ws_wechat_id["D2"].value
+
+    def GetWechatPath(self):
+        key = win32api.RegOpenKey(
+            win32con.HKEY_CURRENT_USER,
+            "SOFTWARE\\Tencent\\WeChat",
+            0,
+            win32con.KEY_ALL_ACCESS,
+        )
+        value = win32api.RegQueryValueEx(key, "InstallPath")[0]
+        win32api.RegCloseKey(key)
+        value += "\\" + "WeChat.exe"
+        return value
+
+    @retry(stop_max_attempt_number=3)
+    def Open_Wechat(self):
+        global WechatWindow, search_box, input_box, sendfile_button, send_button
+        auto.SendKeys("{Ctrl}{Alt}w")  # 快捷键打开微信
+        WechatWindow = auto.WindowControl(searchDepth=1, Name="微信")
+        if not WechatWindow.Exists():
+            os.startfile(self.GetWechatPath())
+            auto.PaneControl(
+                searchDepth=2,
+                Name="微信").ButtonControl(Name="进入微信").Click(simulateMove=False)
+        search_box = WechatWindow.EditControl(Name="搜索")
+        input_box = WechatWindow.EditControl(Name="输入")
+        sendfile_button = WechatWindow.ButtonControl(Name="发送文件")
+
+    def Search_person(self, name):
+        auto.SetClipboardText(name)
+        search_box.Click(simulateMove=False)
+        search_box.SendKeys("{Ctrl}v")
+        time.sleep(1)
+        search_box.SendKeys("{Enter}")
+
+    def Search_group_atperson(self, 加工厂群聊备注, *args):
+        auto.SetClipboardText(加工厂群聊备注)
+        search_box.Click(simulateMove=False)
+        search_box.SendKeys("{Ctrl}v")
+        time.sleep(1)
+        search_box.SendKeys("{Enter}")
+        time.sleep(0.5)
+        for arg in args:
+            if arg is not None:
+                input_box.SendKeys("@")
+                input_box.SendKeys(arg, interval=0.05)
+                time.sleep(1)
+                input_box.SendKeys("{Enter}")
+            else:
+                pass
+
+    def Send_text(self, message):
+        auto.SetClipboardText(message)
+        input_box.SendKeys("{Ctrl}v")
+        time.sleep(1)
+        input_box.SendKeys("{Enter}")
+
+    def Send_file(self, file_path):
+        sendfile_button.Click(simulateMove=False)
+        global OpenFile, filename_box, open_button
+        filename_box = auto.WindowControl(searchDepth=3,
+                                          Name="打开").EditControl(Name="文件名(N):")
+        auto.SetClipboardText(file_path)
+        filename_box.Click(simulateMove=False)
+        filename_box.SendKeys("{Ctrl}v")
+        time.sleep(1)
+        filename_box.SendKeys("{Enter}")
+        time.sleep(1)
+        input_box.SendKeys("{Enter}")
+
+
+class Factories(Enum):  # 加工厂 在外加工厂基础资料.xlsx 微信联系人所在的列号
+    外加工厂 = 'A'
+    秀连达 = 'F'
+    连美鑫 = 'G'
+    印花 = 'H'
+
+
+def 微信发送_加工厂缺货文件(factory_name: Factories = Factories.外加工厂.name):
     wx = WechatSendfile()
     excel = ExcelVariables()
     wx.Open_Wechat()
-    for 缺货外加工厂 in excel.Get_single_column_range(
-            file_name=r'缺货计算\4外加工厂缺货模板.xlsx',
+    if factory_name == Factories.外加工厂.name:
+        for 缺货外加工厂 in excel.Get_single_column_range(
+                file_name=r'缺货计算\4外加工厂缺货模板.xlsx',
+                sheet_name='Sheet1',
+                column_name='A',
+                start_row=2):
+            if 缺货外加工厂[0].value is not None:
+                for 外加工厂名称 in wx.ws_outsource_factory.iter_rows(
+                        2, wx.ws_outsource_factory.max_row, 1, 1):
+                    if 外加工厂名称[0].value == 缺货外加工厂[0].value:
+                        args = (
+                            '外加工厂-' + 缺货外加工厂[0].value,  # 加工厂群聊备注赋值
+                            外加工厂名称[0].offset(0, 1).value,  # 外加工厂联系人微信号赋值
+                        )
+                        cell_range = excel.Get_single_column_range(
+                            file_name=r'缺货计算\外加工厂基础资料.xlsx',
+                            sheet_name='Sheet1',
+                            column_name=Factories.秀连达.value,  # F列为 秀连达 联系人微信号
+                            start_row=2)
+                        本厂要艾特的联系人微信号 = tuple(
+                            cell[0].value for cell in cell_range)
+                        args += 本厂要艾特的联系人微信号
+                        wx.Search_group_atperson(*args)
+                        wx.Send_text(wx.缺货群发消息)
+                        wx.Send_file(
+                            os.path.join(desktop_path, r'缺货计算\缺货图片',
+                                         缺货外加工厂[0].value + '.png'))
+                        break
+    else:
+        args = ('本加工厂-' + factory_name)
+        cell_range = excel.Get_single_column_range(
+            file_name=r'缺货计算\外加工厂基础资料.xlsx',
             sheet_name='Sheet1',
-            column_name='A',
-            start_row=2):
-        if 缺货外加工厂[0].value is not None:
-            for 外加工厂名称 in wx.ws_outsource_factory.iter_rows(
-                    2, wx.ws_outsource_factory.max_row, 1, 1):
-                if 外加工厂名称[0].value == 缺货外加工厂[0].value:
-                    args = (
-                        '外加工厂-' + 缺货外加工厂[0].value,  # 外加工厂群聊备注赋值
-                        外加工厂名称[0].offset(0, 1).value,  # 外加工厂联系人微信号赋值
-                    )
-                    cell_range = excel.Get_single_column_range(
-                        file_name=r'缺货计算\外加工厂基础资料.xlsx',
-                        sheet_name='Sheet1',
-                        column_name='F',
-                        start_row=2)
-                    本厂要艾特的联系人微信号 = tuple(cell[0].value for cell in cell_range)
-                    args += 本厂要艾特的联系人微信号
-                    wx.Search_group_atperson(*args)
-                    wx.Send_text('这个群发测试，请忽略')
-                    wx.Send_file(
-                        os.path.join(desktop_path, r'缺货计算\缺货图片',
-                                     缺货外加工厂[0].value + '.png'))
-                    break
+            column_name=factory_name.value,  # 动态字典列为 本加工厂 联系人微信号
+            start_row=2)
+        本厂要艾特的联系人微信号 = tuple(cell[0].value for cell in cell_range)
+        args += 本厂要艾特的联系人微信号
+        wx.Search_group_atperson(*args)
+        wx.Send_text(wx.缺货群发消息)
+        wx.Send_file(
+            os.path.join(desktop_path, r'缺货计算\每天缺货明细',
+                         formatted_today + factory_name.name + '缺货明细.xlsx'))
     del excel
     del wx
 
 
-class RecordScreen:
-
-    def 录屏开始(self):  # 录入视频
-        global record_name
-        fps = 10
-        record_name = datetime.now().strftime(
-            '%Y-%m-%d %H-%M-%S')  # 当前的时间（当文件名）
-        screen = ImageGrab.grab()  # 获取当前屏幕
-        width, high = screen.size  # 获取当前屏幕的大小
-        fourcc = cv2.VideoWriter_fourcc('X', 'V', 'I',
-                                        'D')  # MPEG-4编码,文件后缀可为.avi .asf .mov等
-        video = cv2.VideoWriter('%s.avi' % record_name, fourcc, fps,
-                                (width, high))  # （文件名，编码器，帧率，视频宽高）
-        print('开始录制!')
-        prev_x, prev_y = None, None  # 用于记录上一帧的鼠标坐标
-        while True:
-            if self.flag:
-                print("录制结束！")
-                video.release()  # 释放
-                break
-            im = ImageGrab.grab()  # 屏幕抓图，图片为RGB模式
-            # 获取当前鼠标的坐标
-            x, y = pyautogui.position()
-            # 如果上一帧的鼠标坐标和当前鼠标坐标不一样，说明鼠标有移动
-            if prev_x is not None and prev_y is not None and (prev_x != x or
-                                                              prev_y != y):
-                # 在鼠标位置画黄底圆圈
-                draw = ImageDraw.Draw(im)
-                draw.ellipse([(x - 15, y - 15), (x + 15, y + 15)],
-                             outline='yellow',
-                             width=4)
-            prev_x, prev_y = x, y  # 更新上一帧的鼠标坐标
-            frame = cv2.cvtColor(np.array(im),
-                                 cv2.COLOR_RGB2BGR)  # 转为opencv的BGR模式
-            video.write(frame)  # 写入vedio定义的文件
-
-    def 录屏结束(self):
-        self.flag = True
-
-    def 开启线程录屏(self):
-        self.flag = False
-        th = threading.Thread(target=self.录屏开始)
-        th.start()
-
-
 if __name__ == "__main__":
-    rec_scr = RecordScreen()
-    rec_scr.开启线程录屏()
-    time.sleep(10)
-    rec_scr.录屏结束()
-    del rec_scr
-    # 微信发送_外加工厂缺货图片()
-    # toaster.show_toast("任务执行情况", "任务执行完毕", duration=1)
-    # del toaster
+    # rec_scr = RecordScreen()
+    # rec_scr.开启线程录屏()
+
+    export_file = ExportErp321Files()
+    export_file.导出文件_仓库库存(warehouse_name='厦门仓')
+    export_file.导出文件_仓库库存(warehouse_name='广州仓')
+    export_file.导出文件_仓库库存(warehouse_name='上海仓')
+    # export_file.导出文件_日期区间采购入库(os.path.join(
+    #     desktop_path, r"缺货计算\导出所需文件\每天采购入库",
+    #     "采购_" + ExcelVariables.formatted_yesterday + ".xlsx"),
+    #                           start_date=ExcelVariables.formatted_yesterday,
+    #                           end_date=ExcelVariables.formatted_yesterday)
+    export_file.删除browser实例()
+    del export_file
+
+    ToastNotifier().show_toast("任务执行情况", "任务执行完毕", duration=5)
+"""
+    # 补充代码，等待excel下载文件出现
+    excel = ExcelVariables()
+    excel.Open_xlsm_run_marco(xlsm_name=os.path.join(desktop_path, 'file_name'),
+                              macro_name='')
+    excel.Close_xlsm(xlsm_name='')
+    del excel
+
+    微信发送_加工厂缺货文件(Factories.外加工厂)
+    微信发送_加工厂缺货文件(Factories.连美鑫)
+    微信发送_加工厂缺货文件(Factories.秀连达)
+    微信发送_加工厂缺货文件(Factories.印花)
+"""
+# rec_scr.录屏结束()
+# del rec_scr
+# ToastNotifier.show_toast("任务执行情况", "任务执行完毕", duration=5)
