@@ -131,6 +131,7 @@ class ElementsXpath:
     库存_导出到EXCEL = '//span[text()="导出到Excel"]'
     导出所有符合条件的订单 = '//span[text()="导出所有符合条件的订单"]'
     导出所有符合条件的单据 = '//div[text()="导出所有符合条件的单据"]'
+    商品库存_导出所有符合条件的单据 = '//span[text()="导出所有符合条件的单据"]'
     导出竖向 = '//div[text()="导出（竖向）"]'
     报表_销售主题分析 = '//div[@class="side-menu-cell side-menu-cell-usual"]/div[@class="side-menu-item usual" and text()="销售主题分析"]'
     销售主题分析_销售排行商品 = '//div[text()="销售排行(商品)"]'
@@ -230,17 +231,6 @@ class ExportErp321Files:
         self.browser = WebElementsMethod()
         self.browser.Attach_to_erp321()
 
-    def 导出文件_厦门仓库存(self, save_file_path):
-        self.browser.Switch_to_default()
-        self.browser.Click_element(ElementsXpath.侧边菜单_库存)
-        self.browser.Click_element(ElementsXpath.库存_箱及仓位库存)
-        self.browser.Switch_to_iframe(ElementsXpath.iframe_箱及仓位库存)
-        self.browser.Click_element(ElementsXpath.账号穿透_贸易账号)
-        self.browser.Click_element(ElementsXpath.账号穿透_厦门总发货仓)
-        self.browser.Click_element(ElementsXpath.账号穿透_确定)
-        self.browser.Click_element(ElementsXpath.库存_导出到EXCEL)
-        self.browser.Saveas(save_file_path)
-
     def 导出文件_仓库库存(self, warehouse_name):
         self.browser.Switch_to_default()
         self.browser.Click_element(ElementsXpath.侧边菜单_库存)
@@ -260,34 +250,11 @@ class ExportErp321Files:
             self.browser.Click_element(ElementsXpath.账号穿透_贸易账号)
             self.browser.Click_element(ElementsXpath.账号穿透_上海仓)
             self.browser.Click_element(ElementsXpath.账号穿透_确定)
-            self.browser.Click_element(ElementsXpath.导出所有符合条件的单据)
+            self.browser.Click_element(ElementsXpath.商品库存_导出所有符合条件的单据)
             self.browser.Click_element(ElementsXpath.导出竖向)
         self.browser.Saveas(
             os.path.join(desktop_path, r"缺货计算\导出所需文件",
                          warehouse_name + "库存.xlsx"))
-
-    def 导出文件_广州仓库存(self, save_file_path):
-        self.browser.Switch_to_default()
-        self.browser.Click_element(ElementsXpath.侧边菜单_库存)
-        self.browser.Click_element(ElementsXpath.库存_箱及仓位库存)
-        self.browser.Switch_to_iframe(ElementsXpath.iframe_箱及仓位库存)
-        self.browser.Click_element(ElementsXpath.账号穿透_贸易账号)
-        self.browser.Click_element(ElementsXpath.账号穿透_广州云衫仓)
-        self.browser.Click_element(ElementsXpath.账号穿透_确定)
-        self.browser.Click_element(ElementsXpath.库存_导出到EXCEL)
-        self.browser.Saveas(save_file_path)
-
-    def 导出文件_上海仓库存(self, save_file_path):
-        self.browser.Switch_to_default()
-        self.browser.Click_element(ElementsXpath.侧边菜单_库存)
-        self.browser.Click_element(ElementsXpath.库存_商品库存分仓)
-        self.browser.Switch_to_iframe(ElementsXpath.iframe_商品库存分仓)
-        self.browser.Click_element(ElementsXpath.账号穿透_贸易账号)
-        self.browser.Click_element(ElementsXpath.账号穿透_上海仓)
-        self.browser.Click_element(ElementsXpath.账号穿透_确定)
-        self.browser.Click_element(ElementsXpath.导出所有符合条件的单据)
-        self.browser.Click_element(ElementsXpath.导出竖向)
-        self.browser.Saveas(save_file_path)
 
     def 导出文件_日期区间销售(self, save_file_path):
         self.browser.Switch_to_default()
@@ -486,9 +453,9 @@ if __name__ == "__main__":
     # rec_scr.开启线程录屏()
 
     export_file = ExportErp321Files()
-    export_file.导出文件_仓库库存(warehouse_name='厦门仓')
-    export_file.导出文件_仓库库存(warehouse_name='广州仓')
-    export_file.导出文件_仓库库存(warehouse_name='上海仓')
+    for warehouse_name in ['厦门仓', '广州仓', '上海仓']:
+        export_file.导出文件_仓库库存(warehouse_name)
+
     # export_file.导出文件_日期区间采购入库(os.path.join(
     #     desktop_path, r"缺货计算\导出所需文件\每天采购入库",
     #     "采购_" + ExcelVariables.formatted_yesterday + ".xlsx"),
